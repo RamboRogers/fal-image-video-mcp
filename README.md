@@ -6,7 +6,7 @@
 [![Platform Support](https://img.shields.io/badge/platform-Node.js%2018%2B-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0%2B-blue.svg)](https://www.typescriptlang.org/)
-[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io/) [![smithery badge](https://smithery.ai/badge/@RamboRogers/fal-image-video-mcp)](https://smithery.ai/server/@RamboRogers/fal-image-video-mcp)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io/) 
 
 Seamless bridge between FAL AI's powerful image and video generation capabilities and MCP-compatible clients like Claude. **All generated content is automatically downloaded to your local machine** while providing public URLs, data URLs, and local file paths.
 
@@ -15,23 +15,6 @@ Seamless bridge between FAL AI's powerful image and video generation capabilitie
 
 **Make Videos**
 ![Example of MCP](media/video00.gif)
-
----
-
-## 🌟 Deployment Options
-
-### 🔗 Smithery (Recommended)
-Deploy instantly on [Smithery](https://smithery.ai/server/@RamboRogers/fal-image-video-mcp) - no setup required!
-
-1. Visit the [Smithery server page](https://smithery.ai/server/@RamboRogers/fal-image-video-mcp)
-2. Add your FAL_KEY in the configuration
-3. Deploy with one click
-4. Use with any MCP-compatible client
-
-### 🖥️ Claude Desktop (Local)
-For local Claude Desktop integration with full control.
-
----
 
 ## 🚀 Claude Desktop Setup
 
