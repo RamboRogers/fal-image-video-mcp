@@ -245,7 +245,7 @@ class FalMcpServer {
     this.server = new Server(
       {
         name: 'fal-image-video-mcp',
-        version: '1.0.2',
+        version: '1.0.5',
       },
       {
         capabilities: {
@@ -699,8 +699,27 @@ class FalMcpServer {
   }
 
   private setupConfigHandlers() {
-    // Configuration handlers are handled differently in HTTP mode
-    // The MCP protocol over HTTP will handle these automatically
+    // Add MCP configuration schema handlers for Smithery
+    try {
+      // Try to register configuration schema handler
+      this.server.setRequestHandler({ method: 'config/schema' } as any, async () => {
+        return {
+          schema: {
+            type: 'object',
+            properties: {
+              FAL_KEY: {
+                type: 'string',
+                description: 'Your FAL AI API key for image and video generation'
+              }
+            },
+            required: ['FAL_KEY']
+          }
+        };
+      });
+    } catch (error) {
+      // Ignore if method doesn't exist in this MCP version
+      console.error('Note: config/schema handler not available in this MCP version');
+    }
   }
 
   private async findAvailablePort(startPort: number): Promise<number> {
