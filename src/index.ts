@@ -9,6 +9,7 @@ import {
   ErrorCode,
   ListToolsRequestSchema,
   McpError,
+  InitializeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { fal } from '@fal-ai/client';
 import * as fs from 'fs';
@@ -294,6 +295,11 @@ class FalMcpServer {
       {
         capabilities: {
           tools: {},
+          resources: {},
+          prompts: {},
+          experimental: {
+            configSchema: true
+          }
         },
       }
     );
@@ -743,27 +749,62 @@ class FalMcpServer {
   }
 
   private setupConfigHandlers() {
-    // Add MCP configuration schema handlers for Smithery
-    try {
-      // Try to register configuration schema handler
-      this.server.setRequestHandler({ method: 'config/schema' } as any, async () => {
-        return {
-          schema: {
-            type: 'object',
-            properties: {
-              FAL_KEY: {
-                type: 'string',
-                description: 'Your FAL AI API key for image and video generation'
-              }
-            },
-            required: ['FAL_KEY']
+    // Add initialization handler for Smithery
+    this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      return {
+        protocolVersion: '2024-11-05',
+        capabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+          experimental: {
+            configSchema: {
+              type: 'object',
+              properties: {
+                FAL_KEY: {
+                  type: 'string',
+                  description: 'Your FAL AI API key for image and video generation'
+                }
+              },
+              required: ['FAL_KEY']
+            }
           }
-        };
-      });
-    } catch (error) {
-      // Ignore if method doesn't exist in this MCP version
-      console.error('Note: config/schema handler not available in this MCP version');
-    }
+        },
+        serverInfo: {
+          name: 'fal-image-video-mcp',
+          version: '1.0.6'
+        }
+      };
+    });
+
+    // Add MCP configuration schema handlers for Smithery
+    const configMethods = [
+      'config/schema',
+      'configuration/schema', 
+      'server/config',
+      'mcp/config'
+    ];
+
+    configMethods.forEach(method => {
+      try {
+        this.server.setRequestHandler({ method } as any, async () => {
+          return {
+            schema: {
+              type: 'object',
+              properties: {
+                FAL_KEY: {
+                  type: 'string',
+                  description: 'Your FAL AI API key for image and video generation'
+                }
+              },
+              required: ['FAL_KEY']
+            }
+          };
+        });
+      } catch (error) {
+        // Method might not be supported, continue
+      }
+    });
   }
 
   private async findAvailablePort(startPort: number): Promise<number> {
@@ -795,25 +836,18 @@ class FalMcpServer {
       
       // HTTP transport for Smithery and testing
       const httpServer = createServer(async (req, res) => {
-        // Enable CORS
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-        
         if (req.method === 'OPTIONS') {
-          res.writeHead(200);
+          res.writeHead(200, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+          });
           res.end();
           return;
         }
         
         if (req.url === '/mcp' && req.method === 'GET') {
-          // SSE endpoint for MCP communication
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          });
-          
+          // SSE endpoint for MCP communication - let SSE transport handle headers
           const transport = new SSEServerTransport('/mcp', res);
           await this.server.connect(transport);
           
@@ -830,26 +864,37 @@ class FalMcpServer {
             try {
               const message = JSON.parse(body);
               
-              // Create a transport for this request
-              const transport = new SSEServerTransport('/mcp', res);
-              await this.server.connect(transport);
-              
-              // Handle the message
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ status: 'received' }));
+              // For POST requests, we need to handle the message differently
+              // Don't create SSE transport for POST, just return response
+              res.writeHead(200, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              });
+              res.end(JSON.stringify({ 
+                status: 'received',
+                message: 'Use GET /mcp for SSE connection'
+              }));
               
             } catch (error) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.writeHead(400, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              });
               res.end(JSON.stringify({ error: 'Invalid JSON' }));
             }
           });
           
         } else if (req.url === '/health' && req.method === 'GET') {
           // Health check endpoint
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
           res.end(JSON.stringify({ status: 'ok', server: 'fal-image-video-mcp' }));
         } else {
-          res.writeHead(404);
+          res.writeHead(404, {
+            'Access-Control-Allow-Origin': '*'
+          });
           res.end('Not found');
         }
       });
