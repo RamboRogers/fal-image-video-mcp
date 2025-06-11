@@ -14,10 +14,15 @@ import * as path from 'path';
 import * as os from 'os';
 import { exec } from 'child_process';
 
-// Configure FAL client
-fal.config({
-  credentials: process.env.FAL_KEY,
-});
+// Configure FAL client - will be lazily configured when needed
+function configureFalClient() {
+  if (!process.env.FAL_KEY) {
+    throw new Error('FAL_KEY environment variable is required. Please configure your API key.');
+  }
+  fal.config({
+    credentials: process.env.FAL_KEY,
+  });
+}
 
 // Configure download path
 const DOWNLOAD_PATH = process.env.DOWNLOAD_PATH || path.join(os.homedir(), 'Downloads');
@@ -238,7 +243,7 @@ class FalMcpServer {
     this.server = new Server(
       {
         name: 'fal-image-video-mcp',
-        version: '1.0.0',
+        version: '1.0.2',
       },
       {
         capabilities: {
@@ -248,6 +253,7 @@ class FalMcpServer {
     );
 
     this.setupToolHandlers();
+    this.setupConfigHandlers();
   }
 
   private generateToolSchema(model: any, category: string) {
@@ -410,6 +416,8 @@ class FalMcpServer {
     } = args;
 
     try {
+      // Configure FAL client lazily
+      configureFalClient();
       const inputParams: any = { prompt };
       
       // Add common parameters
@@ -469,6 +477,8 @@ class FalMcpServer {
     const { image_url, prompt, duration = 5, aspect_ratio = '16:9' } = args;
 
     try {
+      // Configure FAL client lazily
+      configureFalClient();
       const inputParams: any = { image_url };
       
       if (prompt) inputParams.prompt = prompt;
@@ -519,6 +529,8 @@ class FalMcpServer {
     const { prompt, duration = 5, aspect_ratio = '16:9' } = args;
 
     try {
+      // Configure FAL client lazily
+      configureFalClient();
       const inputParams: any = { prompt };
       
       if (duration) inputParams.duration = duration;
@@ -607,6 +619,8 @@ class FalMcpServer {
     const { endpoint, input_params, category_hint = 'other' } = args;
 
     try {
+      // Configure FAL client lazily
+      configureFalClient();
       const result = await fal.subscribe(endpoint, { input: input_params });
 
       // Handle different output types based on category hint
@@ -680,6 +694,32 @@ class FalMcpServer {
     } catch (error) {
       throw new Error(`Custom model execution failed for ${endpoint}: ${error}`);
     }
+  }
+
+  private setupConfigHandlers() {
+    // Handle configuration schema requests for Smithery deployment
+    this.server.setRequestHandler('config/get_schema' as any, async () => {
+      return {
+        schema: {
+          type: 'object',
+          properties: {
+            FAL_KEY: {
+              type: 'string',
+              description: 'Your FAL AI API key for image and video generation'
+            }
+          },
+          required: ['FAL_KEY']
+        }
+      };
+    });
+
+    this.server.setRequestHandler('config/get' as any, async () => {
+      return {
+        config: {
+          FAL_KEY: process.env.FAL_KEY || ''
+        }
+      };
+    });
   }
 
   async run() {
