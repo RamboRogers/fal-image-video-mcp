@@ -1,6 +1,6 @@
 {
   "name": "fal-image-video-mcp",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "MCP server for FAL AI image and video generation with data URL support",
   "main": "dist/index.js",
   "module": "./src/index.ts",

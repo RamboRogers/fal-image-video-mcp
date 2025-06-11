@@ -18,6 +18,21 @@ Seamless bridge between FAL AI's powerful image and video generation capabilitie
 
 ---
 
+## 🌟 Deployment Options
+
+### 🔗 Smithery (Recommended)
+Deploy instantly on [Smithery](https://smithery.ai/server/@RamboRogers/fal-image-video-mcp) - no setup required!
+
+1. Visit the [Smithery server page](https://smithery.ai/server/@RamboRogers/fal-image-video-mcp)
+2. Add your FAL_KEY in the configuration
+3. Deploy with one click
+4. Use with any MCP-compatible client
+
+### 🖥️ Claude Desktop (Local)
+For local Claude Desktop integration with full control.
+
+---
+
 ## 🚀 Claude Desktop Setup
 
 ### Quick Setup
@@ -129,6 +144,8 @@ Seamless bridge between FAL AI's powerful image and video generation capabilitie
 | 📥 **Auto Downloads** | All content automatically saved locally with custom path support |
 | 🔗 **Triple URL Support** | Public URLs, Data URLs, and Local file paths |
 | 🚀 **Universal Execution** | Run any FAL model beyond the curated registry |
+| 🌐 **Multi-Transport** | stdio (Claude Desktop) + HTTP/SSE (Smithery/Web) |
+| 🔐 **Lazy Authentication** | Discover tools without API key, authenticate on use |
 | ⚡ **Performance** | TypeScript implementation, async operations, error handling |
 
 ---
@@ -159,8 +176,9 @@ Seamless bridge between FAL AI's powerful image and video generation capabilitie
 | **Backend** | TypeScript + Node.js | Core server implementation |
 | **AI Client** | @fal-ai/client | FAL API integration |
 | **MCP SDK** | @modelcontextprotocol/sdk | MCP protocol compliance |
-| **Transport** | stdio | Standard input/output communication |
+| **Transport** | stdio / HTTP + SSE | Multi-transport communication |
 | **Build System** | TypeScript Compiler | Production builds |
+| **Deployment** | npm / Docker / Smithery | Multiple deployment options |
 
 ---
 
@@ -432,24 +450,91 @@ Both tools return structured JSON with:
 
 ## 🔧 Alternative Installation Methods
 
-### NPX (One-time use)
+### 🌐 HTTP Server Mode (Standalone Testing)
+
+**Start HTTP server for testing or integration:**
 ```bash
-npx -y fal-image-video-mcp
+# Start on auto-detected port (default: 3000)
+npx -y fal-image-video-mcp --http
+
+# Or specify port via environment
+PORT=8080 npx -y fal-image-video-mcp --http
+
+# With custom transport flag
+MCP_TRANSPORT=http npx -y fal-image-video-mcp
 ```
 
-### Global Installation
+**HTTP Endpoints:**
+- `GET /health` - Server health check
+- `GET /mcp` - SSE endpoint for MCP communication  
+- `POST /mcp` - JSON-RPC message handling
+
+**Test the server:**
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# List available tools
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}'
+```
+
+### 🎯 Authentication in HTTP Mode
+
+**Lazy Loading Support:**
+- ✅ Server starts without FAL_KEY (for tool discovery)
+- ✅ API key validated only when tools are invoked
+- ✅ Clear error messages for missing authentication
+
+**Set your FAL_KEY:**
+```bash
+# Via environment variable
+FAL_KEY=your-api-key npx fal-image-video-mcp --http
+
+# Or configure in your deployment platform
+export FAL_KEY=your-api-key
+npx fal-image-video-mcp --http
+```
+
+**Production deployment example:**
+```dockerfile
+# Dockerfile
+FROM node:18-slim
+ENV FAL_KEY=your-api-key
+ENV PORT=3000
+RUN npx -y fal-image-video-mcp --http
+EXPOSE 3000
+```
+
+### 📱 NPX (One-time use)
+```bash
+# Stdio mode (Claude Desktop)
+npx -y fal-image-video-mcp
+
+# HTTP mode (Testing/Smithery)
+npx -y fal-image-video-mcp --http
+```
+
+### 🔧 Global Installation
 ```bash
 npm install -g fal-image-video-mcp
-fal-image-video-mcp
+
+# Run in different modes
+fal-image-video-mcp              # Stdio mode
+fal-image-video-mcp --http       # HTTP mode
 ```
 
-### From Source
+### 💻 From Source
 ```bash
 git clone https://github.com/RamboRogers/fal-image-video-mcp.git
 cd fal-image-video-mcp
 npm install
 npm run build
-npm start
+
+# Choose your transport
+npm start                    # Stdio mode
+npm start -- --http         # HTTP mode
 ```
 
 ---

@@ -717,19 +717,71 @@ class FalMcpServer {
   }
 
   async run() {
-    const basePort = Number(process.env.PORT) || 3000;
-    const useHttp = process.env.MCP_TRANSPORT === 'http' || process.argv.includes('--http');
+    // Auto-detect HTTP mode: Smithery sets PORT, or explicit flags
+    const useHttp = !!process.env.PORT || 
+                   process.env.MCP_TRANSPORT === 'http' || 
+                   process.argv.includes('--http');
     
     if (useHttp) {
-      // Find an available port starting from basePort
-      const availablePort = await this.findAvailablePort(basePort);
+      const basePort = Number(process.env.PORT) || 3000;
+      
+      // Use exact port if specified (Smithery), otherwise find available
+      const targetPort = process.env.PORT ? 
+        basePort : 
+        await this.findAvailablePort(basePort);
       
       // HTTP transport for Smithery and testing
-      const httpServer = createServer((req, res) => {
-        if (req.url === '/mcp' && req.method === 'POST') {
+      const httpServer = createServer(async (req, res) => {
+        // Enable CORS
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        
+        if (req.method === 'OPTIONS') {
+          res.writeHead(200);
+          res.end();
+          return;
+        }
+        
+        if (req.url === '/mcp' && req.method === 'GET') {
+          // SSE endpoint for MCP communication
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+          
           const transport = new SSEServerTransport('/mcp', res);
-          this.server.connect(transport);
-        } else if (req.url === '/mcp' && req.method === 'GET') {
+          await this.server.connect(transport);
+          
+          // Keep connection alive
+          req.on('close', () => {
+            transport.close?.();
+          });
+          
+        } else if (req.url === '/mcp' && req.method === 'POST') {
+          // Handle MCP messages
+          let body = '';
+          req.on('data', chunk => body += chunk);
+          req.on('end', async () => {
+            try {
+              const message = JSON.parse(body);
+              
+              // Create a transport for this request
+              const transport = new SSEServerTransport('/mcp', res);
+              await this.server.connect(transport);
+              
+              // Handle the message
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ status: 'received' }));
+              
+            } catch (error) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            }
+          });
+          
+        } else if (req.url === '/health' && req.method === 'GET') {
           // Health check endpoint
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ status: 'ok', server: 'fal-image-video-mcp' }));
@@ -739,8 +791,8 @@ class FalMcpServer {
         }
       });
       
-      httpServer.listen(availablePort, () => {
-        console.error(`FAL Image/Video MCP server running on HTTP port ${availablePort} at /mcp`);
+      httpServer.listen(targetPort, () => {
+        console.error(`FAL Image/Video MCP server running on HTTP port ${targetPort} at /mcp`);
       });
     } else {
       // Default stdio transport for Claude Desktop
