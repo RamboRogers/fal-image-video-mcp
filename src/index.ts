@@ -4,6 +4,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { createServer } from 'http';
+import { URL } from 'url';
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -17,13 +18,40 @@ import * as path from 'path';
 import * as os from 'os';
 import { exec } from 'child_process';
 
-// Configure FAL client - will be lazily configured when needed
-function configureFalClient() {
-  if (!process.env.FAL_KEY) {
-    throw new Error('FAL_KEY environment variable is required. Please configure your API key.');
+// Parse dot-notation query parameters into nested object
+function parseDotNotation(params: URLSearchParams): any {
+  const result: any = {};
+  
+  for (const [key, value] of params.entries()) {
+    const keys = key.split('.');
+    let current = result;
+    
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k = keys[i];
+      if (!(k in current)) {
+        current[k] = {};
+      }
+      current = current[k];
+    }
+    
+    current[keys[keys.length - 1]] = value;
   }
+  
+  return result;
+}
+
+// Configure FAL client - will be lazily configured when needed
+function configureFalClient(configOverride?: any) {
+  const falKey = configOverride?.FAL_KEY || 
+                 configOverride?.apiKey || 
+                 process.env.FAL_KEY;
+                 
+  if (!falKey) {
+    throw new Error('FAL_KEY is required. Please configure your API key via environment variable or query parameter.');
+  }
+  
   fal.config({
-    credentials: process.env.FAL_KEY,
+    credentials: falKey,
   });
 }
 
@@ -285,6 +313,7 @@ async function downloadAndProcessVideo(videoUrl: string, modelName: string): Pro
 
 class FalMcpServer {
   private server: Server;
+  private currentQueryConfig: any = {};
 
   constructor() {
     this.server = new Server(
@@ -306,6 +335,11 @@ class FalMcpServer {
 
     this.setupToolHandlers();
     this.setupConfigHandlers();
+  }
+
+  // Method to update query configuration for HTTP mode
+  setQueryConfig(config: any) {
+    this.currentQueryConfig = config;
   }
 
   private generateToolSchema(model: any, category: string) {
@@ -468,8 +502,8 @@ class FalMcpServer {
     } = args;
 
     try {
-      // Configure FAL client lazily
-      configureFalClient();
+      // Configure FAL client lazily with query config override
+      configureFalClient(this.currentQueryConfig);
       const inputParams: any = { prompt };
       
       // Add common parameters
@@ -529,8 +563,8 @@ class FalMcpServer {
     const { image_url, prompt, duration = 5, aspect_ratio = '16:9' } = args;
 
     try {
-      // Configure FAL client lazily
-      configureFalClient();
+      // Configure FAL client lazily with query config override
+      configureFalClient(this.currentQueryConfig);
       const inputParams: any = { image_url };
       
       if (prompt) inputParams.prompt = prompt;
@@ -581,8 +615,8 @@ class FalMcpServer {
     const { prompt, duration = 5, aspect_ratio = '16:9' } = args;
 
     try {
-      // Configure FAL client lazily
-      configureFalClient();
+      // Configure FAL client lazily with query config override
+      configureFalClient(this.currentQueryConfig);
       const inputParams: any = { prompt };
       
       if (duration) inputParams.duration = duration;
@@ -671,8 +705,8 @@ class FalMcpServer {
     const { endpoint, input_params, category_hint = 'other' } = args;
 
     try {
-      // Configure FAL client lazily
-      configureFalClient();
+      // Configure FAL client lazily with query config override
+      configureFalClient(this.currentQueryConfig);
       const result = await fal.subscribe(endpoint, { input: input_params });
 
       // Handle different output types based on category hint
@@ -836,6 +870,21 @@ class FalMcpServer {
       
       // HTTP transport for Smithery and testing
       const httpServer = createServer(async (req, res) => {
+        // Log all incoming requests for debugging
+        console.error(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+        console.error(`Headers:`, JSON.stringify(req.headers, null, 2));
+        
+        // Parse URL and extract configuration from query parameters
+        const fullUrl = `http://localhost:${targetPort}${req.url}`;
+        const parsedUrl = new URL(fullUrl);
+        const queryConfig = parseDotNotation(parsedUrl.searchParams);
+        
+        if (Object.keys(queryConfig).length > 0) {
+          console.error('Parsed query config:', JSON.stringify(queryConfig, null, 2));
+        }
+        
+        // Store query config in a request context for tool handlers
+        (req as any).queryConfig = queryConfig;
         if (req.method === 'OPTIONS') {
           res.writeHead(200, {
             'Access-Control-Allow-Origin': '*',
@@ -846,7 +895,7 @@ class FalMcpServer {
           return;
         }
         
-        if (req.url === '/mcp' && req.method === 'GET') {
+        if (parsedUrl.pathname === '/mcp' && req.method === 'GET') {
           // SSE endpoint for MCP communication - let SSE transport handle headers
           const transport = new SSEServerTransport('/mcp', res);
           await this.server.connect(transport);
@@ -856,25 +905,253 @@ class FalMcpServer {
             transport.close?.();
           });
           
-        } else if (req.url === '/mcp' && req.method === 'POST') {
-          // Handle MCP messages
+        } else if (parsedUrl.pathname === '/mcp' && req.method === 'POST') {
+          // Handle MCP JSON-RPC messages directly
           let body = '';
           req.on('data', chunk => body += chunk);
           req.on('end', async () => {
             try {
               const message = JSON.parse(body);
+              console.error('Received MCP message:', JSON.stringify(message, null, 2));
               
-              // For POST requests, we need to handle the message differently
-              // Don't create SSE transport for POST, just return response
+              // Set query config for tool execution
+              this.setQueryConfig(queryConfig);
+              
+              // Handle MCP protocol messages directly
+              let response;
+              
+              if (message.method === 'initialize') {
+                response = {
+                  jsonrpc: '2.0',
+                  id: message.id,
+                  result: {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {
+                      tools: {},
+                      resources: {},
+                      prompts: {},
+                      experimental: {
+                        configSchema: {
+                          type: 'object',
+                          properties: {
+                            FAL_KEY: {
+                              type: 'string',
+                              description: 'Your FAL AI API key for image and video generation'
+                            },
+                            apiKey: {
+                              type: 'string',
+                              description: 'Alternative name for FAL API key (alias for FAL_KEY)'
+                            }
+                          },
+                          required: ['FAL_KEY']
+                        }
+                      }
+                    },
+                    serverInfo: {
+                      name: 'fal-image-video-mcp',
+                      version: '1.0.6'
+                    },
+                    ...(Object.keys(queryConfig).length > 0 && {
+                      configuration: {
+                        received: queryConfig,
+                        status: queryConfig.FAL_KEY || queryConfig.apiKey ? 'configured' : 'missing_api_key'
+                      }
+                    })
+                  }
+                };
+              } else if (message.method === 'tools/list') {
+                // Generate tools list directly
+                const tools = [];
+                
+                // Add image generation tools
+                for (const model of MODEL_REGISTRY.imageGeneration) {
+                  tools.push(this.generateToolSchema(model, 'imageGeneration'));
+                }
+                // Add video generation tools  
+                for (const model of MODEL_REGISTRY.textToVideo) {
+                  tools.push(this.generateToolSchema(model, 'textToVideo'));
+                }
+                // Add image-to-video tools
+                for (const model of MODEL_REGISTRY.imageToVideo) {
+                  tools.push(this.generateToolSchema(model, 'imageToVideo'));
+                }
+                
+                // Add utility tools
+                tools.push({
+                  name: 'list_available_models',
+                  description: 'List all available models in the current registry with their capabilities',
+                  inputSchema: {
+                    type: 'object',
+                    properties: {
+                      category: {
+                        type: 'string',
+                        enum: ['all', 'imageGeneration', 'textToVideo', 'imageToVideo'],
+                        default: 'all',
+                        description: 'Filter models by category'
+                      }
+                    },
+                    required: []
+                  }
+                });
+                
+                tools.push({
+                  name: 'execute_custom_model',
+                  description: 'Execute any FAL model by specifying the endpoint directly',
+                  inputSchema: {
+                    type: 'object',
+                    properties: {
+                      endpoint: {
+                        type: 'string',
+                        description: 'FAL model endpoint (e.g., fal-ai/flux/schnell, fal-ai/custom-model)'
+                      },
+                      input_params: {
+                        type: 'object',
+                        description: 'Input parameters for the model (varies by model)'
+                      },
+                      category_hint: {
+                        type: 'string',
+                        enum: ['image', 'video', 'image_to_video', 'other'],
+                        default: 'other',
+                        description: 'Hint about the expected output type for proper handling'
+                      }
+                    },
+                    required: ['endpoint', 'input_params']
+                  }
+                });
+                
+                response = {
+                  jsonrpc: '2.0',
+                  id: message.id,
+                  result: { tools }
+                };
+              } else if (message.method === 'tools/call') {
+                // Handle tool execution directly
+                try {
+                  const { name, arguments: args } = message.params;
+                  console.error('Executing tool:', name, 'with args:', args);
+                  
+                  let toolResult;
+                  
+                  // Handle special tools first
+                  if (name === 'list_available_models') {
+                    toolResult = await this.handleListModels(args);
+                  } else if (name === 'execute_custom_model') {
+                    toolResult = await this.handleCustomModel(args);
+                  } else {
+                    const model = getModelById(name);
+                    if (!model) {
+                      throw new Error(`Unknown model: ${name}`);
+                    }
+
+                    // Determine category and handle accordingly
+                    if (MODEL_REGISTRY.imageGeneration.find(m => m.id === name)) {
+                      toolResult = await this.handleImageGeneration(args, model);
+                    } else if (MODEL_REGISTRY.textToVideo.find(m => m.id === name)) {
+                      toolResult = await this.handleTextToVideo(args, model);
+                    } else if (MODEL_REGISTRY.imageToVideo.find(m => m.id === name)) {
+                      toolResult = await this.handleImageToVideo(args, model);
+                    } else {
+                      throw new Error(`Unsupported model category for: ${name}`);
+                    }
+                  }
+                  
+                  response = {
+                    jsonrpc: '2.0',
+                    id: message.id,
+                    result: toolResult
+                  };
+                } catch (error) {
+                  console.error('Tool execution error:', error);
+                  response = {
+                    jsonrpc: '2.0',
+                    id: message.id,
+                    error: {
+                      code: -32603,
+                      message: 'Internal error',
+                      data: { error: String(error) }
+                    }
+                  };
+                }
+              } else {
+                // Unknown method
+                response = {
+                  jsonrpc: '2.0',
+                  id: message.id,
+                  error: {
+                    code: -32601,
+                    message: 'Method not found',
+                    data: { method: message.method }
+                  }
+                };
+              }
+              
+              console.error('Sending MCP response:', JSON.stringify(response, null, 2));
+              
+              res.writeHead(200, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              });
+              res.end(JSON.stringify(response));
+              
+            } catch (error) {
+              console.error('Error processing MCP message:', error);
+              res.writeHead(400, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              });
+              res.end(JSON.stringify({ 
+                jsonrpc: '2.0',
+                id: null,
+                error: {
+                  code: -32700,
+                  message: 'Parse error',
+                  data: { error: String(error) }
+                }
+              }));
+            }
+          });
+          
+        } else if (parsedUrl.pathname === '/health' && req.method === 'GET') {
+          // Health check endpoint
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ status: 'ok', server: 'fal-image-video-mcp' }));
+        } else if ((parsedUrl.pathname === '/' || parsedUrl.pathname === '') && req.method === 'GET') {
+          // Root endpoint
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ 
+            name: 'fal-image-video-mcp',
+            version: '1.0.6',
+            status: 'running',
+            endpoints: {
+              mcp: '/mcp',
+              health: '/health'
+            }
+          }));
+        } else if (parsedUrl.pathname === '/' && req.method === 'POST') {
+          // Root POST endpoint for MCP
+          let body = '';
+          req.on('data', chunk => body += chunk);
+          req.on('end', async () => {
+            try {
+              const message = JSON.parse(body);
+              console.error('POST to root with message:', message);
+              
+              // Handle as MCP message
               res.writeHead(200, { 
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
               });
               res.end(JSON.stringify({ 
                 status: 'received',
-                message: 'Use GET /mcp for SSE connection'
+                message: 'MCP server running',
+                redirect: '/mcp'
               }));
-              
             } catch (error) {
               res.writeHead(400, { 
                 'Content-Type': 'application/json',
@@ -883,19 +1160,20 @@ class FalMcpServer {
               res.end(JSON.stringify({ error: 'Invalid JSON' }));
             }
           });
-          
-        } else if (req.url === '/health' && req.method === 'GET') {
-          // Health check endpoint
-          res.writeHead(200, { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify({ status: 'ok', server: 'fal-image-video-mcp' }));
         } else {
+          console.error(`404 - Unknown endpoint: ${req.method} ${parsedUrl.pathname}`);
           res.writeHead(404, {
-            'Access-Control-Allow-Origin': '*'
+            'Access-Control-Allow-Origin': '*',
+            'Content-Type': 'application/json'
           });
-          res.end('Not found');
+          res.end(JSON.stringify({ 
+            error: 'Not found',
+            method: req.method,
+            pathname: parsedUrl.pathname,
+            queryParams: Object.fromEntries(parsedUrl.searchParams),
+            available_endpoints: ['/mcp', '/health', '/'],
+            note: 'Use query parameters for configuration: /mcp?FAL_KEY=your-key or /mcp?apiKey=your-key'
+          }));
         }
       });
       
