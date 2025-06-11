@@ -26,19 +26,44 @@ function configureFalClient() {
   });
 }
 
-// Configure download path
-const DOWNLOAD_PATH = process.env.DOWNLOAD_PATH || path.join(os.homedir(), 'Downloads');
+// Configure download path with container-safe fallback
+function getDownloadPath(): string {
+  if (process.env.DOWNLOAD_PATH) {
+    return process.env.DOWNLOAD_PATH;
+  }
+  
+  try {
+    const homeDir = os.homedir();
+    // Check if we're in a container with invalid home directory
+    if (homeDir === '/nonexistent' || homeDir === '/' || !homeDir) {
+      return '/tmp/fal-downloads';
+    }
+    return path.join(homeDir, 'Downloads');
+  } catch (error) {
+    // Fallback for containers or restricted environments
+    return '/tmp/fal-downloads';
+  }
+}
+
+const DOWNLOAD_PATH = getDownloadPath();
 
 // Configure data URL behavior
 const ENABLE_DATA_URLS = process.env.ENABLE_DATA_URLS === 'true'; // Default: false (optimized for Claude Desktop)
 const MAX_DATA_URL_SIZE = parseInt(process.env.MAX_DATA_URL_SIZE || '2097152'); // Default: 2MB
 
-// Configure auto-open behavior
-const AUTOOPEN = process.env.AUTOOPEN !== 'false'; // Default: true (automatically open generated files)
+// Configure auto-open behavior (disabled in containers)
+const AUTOOPEN = process.env.AUTOOPEN !== 'false' && 
+                 !process.env.PORT && // Disable auto-open in HTTP mode (likely container)
+                 process.platform !== 'linux'; // Disable auto-open on Linux containers
 
 // Ensure download directory exists
-if (!fs.existsSync(DOWNLOAD_PATH)) {
-  fs.mkdirSync(DOWNLOAD_PATH, { recursive: true });
+try {
+  if (!fs.existsSync(DOWNLOAD_PATH)) {
+    fs.mkdirSync(DOWNLOAD_PATH, { recursive: true });
+  }
+} catch (error) {
+  console.warn(`Warning: Could not create download directory ${DOWNLOAD_PATH}:`, error);
+  console.warn('Downloads will be disabled for this session');
 }
 
 // Dynamic model registry - this could be updated via API call
@@ -127,8 +152,14 @@ async function urlToDataUrl(url: string): Promise<string | null> {
   }
 }
 
-async function downloadFile(url: string, filename: string): Promise<string> {
+async function downloadFile(url: string, filename: string): Promise<string | null> {
   try {
+    // Check if download directory is available
+    if (!fs.existsSync(DOWNLOAD_PATH)) {
+      console.warn('Download directory not available, skipping download');
+      return null;
+    }
+
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -142,8 +173,8 @@ async function downloadFile(url: string, filename: string): Promise<string> {
     
     return fullPath;
   } catch (error) {
-    console.error('Error downloading file:', error);
-    throw new Error(`Failed to download file: ${error}`);
+    console.warn('Error downloading file (continuing without download):', error);
+    return null;
   }
 }
 
@@ -198,15 +229,21 @@ async function downloadAndProcessImages(images: any[], modelName: string): Promi
       const localPath = await downloadFile(image.url, filename);
       const dataUrl = await urlToDataUrl(image.url);
       
-      // Auto-open the downloaded image
-      await autoOpenFile(localPath);
+      // Auto-open the downloaded image if available
+      if (localPath) {
+        await autoOpenFile(localPath);
+      }
       
       const result: any = {
         url: image.url,
-        localPath,
         width: image.width,
         height: image.height,
       };
+      
+      // Only include localPath if download was successful
+      if (localPath) {
+        result.localPath = localPath;
+      }
       
       // Only include dataUrl if it was successfully generated
       if (dataUrl) {
@@ -225,10 +262,17 @@ async function downloadAndProcessVideo(videoUrl: string, modelName: string): Pro
   const localPath = await downloadFile(videoUrl, filename);
   const dataUrl = await urlToDataUrl(videoUrl);
   
-  // Auto-open the downloaded video
-  await autoOpenFile(localPath);
+  // Auto-open the downloaded video if available
+  if (localPath) {
+    await autoOpenFile(localPath);
+  }
   
-  const result: any = { localPath };
+  const result: any = {};
+  
+  // Only include localPath if download was successful
+  if (localPath) {
+    result.localPath = localPath;
+  }
   
   // Only include dataUrl if it was successfully generated
   if (dataUrl) {

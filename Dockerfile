@@ -36,6 +36,9 @@ COPY --from=builder /app/dist ./dist
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nodejs
 
+# Create download directory with proper permissions
+RUN mkdir -p /tmp/fal-downloads && chown nodejs:nodejs /tmp/fal-downloads
+
 # Change ownership to nodejs user
 RUN chown -R nodejs:nodejs /app
 USER nodejs
