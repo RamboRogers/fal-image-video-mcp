@@ -6,7 +6,7 @@
 [![Platform Support](https://img.shields.io/badge/platform-Node.js%2018%2B-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0%2B-blue.svg)](https://www.typescriptlang.org/)
-[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io/)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io/) [![smithery badge](https://smithery.ai/badge/@RamboRogers/fal-image-video-mcp)](https://smithery.ai/server/@RamboRogers/fal-image-video-mcp)
 
 Seamless bridge between FAL AI's powerful image and video generation capabilities and MCP-compatible clients like Claude. **All generated content is automatically downloaded to your local machine** while providing public URLs, data URLs, and local file paths.
 
