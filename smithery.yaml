@@ -1,0 +1,12 @@
+runtime: "typescript"
+startCommand:
+  type: "http"
+  configSchema:
+    type: "object"
+    properties:
+      FAL_KEY:
+        type: "string"
+        description: "Your FAL AI API key for image and video generation"
+    required: ["FAL_KEY"]
+  exampleConfig:
+    FAL_KEY: "your-fal-api-key-here"
