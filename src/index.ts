@@ -2,6 +2,8 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { createServer } from 'http';
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -697,35 +699,55 @@ class FalMcpServer {
   }
 
   private setupConfigHandlers() {
-    // Handle configuration schema requests for Smithery deployment
-    this.server.setRequestHandler('config/get_schema' as any, async () => {
-      return {
-        schema: {
-          type: 'object',
-          properties: {
-            FAL_KEY: {
-              type: 'string',
-              description: 'Your FAL AI API key for image and video generation'
-            }
-          },
-          required: ['FAL_KEY']
-        }
-      };
-    });
+    // Configuration handlers are handled differently in HTTP mode
+    // The MCP protocol over HTTP will handle these automatically
+  }
 
-    this.server.setRequestHandler('config/get' as any, async () => {
-      return {
-        config: {
-          FAL_KEY: process.env.FAL_KEY || ''
-        }
-      };
+  private async findAvailablePort(startPort: number): Promise<number> {
+    return new Promise((resolve) => {
+      const testServer = createServer();
+      testServer.listen(startPort, () => {
+        const port = (testServer.address() as any)?.port || startPort;
+        testServer.close(() => resolve(port));
+      });
+      testServer.on('error', () => {
+        resolve(this.findAvailablePort(startPort + 1));
+      });
     });
   }
 
   async run() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error('FAL Image/Video MCP server running on stdio');
+    const basePort = Number(process.env.PORT) || 3000;
+    const useHttp = process.env.MCP_TRANSPORT === 'http' || process.argv.includes('--http');
+    
+    if (useHttp) {
+      // Find an available port starting from basePort
+      const availablePort = await this.findAvailablePort(basePort);
+      
+      // HTTP transport for Smithery and testing
+      const httpServer = createServer((req, res) => {
+        if (req.url === '/mcp' && req.method === 'POST') {
+          const transport = new SSEServerTransport('/mcp', res);
+          this.server.connect(transport);
+        } else if (req.url === '/mcp' && req.method === 'GET') {
+          // Health check endpoint
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'ok', server: 'fal-image-video-mcp' }));
+        } else {
+          res.writeHead(404);
+          res.end('Not found');
+        }
+      });
+      
+      httpServer.listen(availablePort, () => {
+        console.error(`FAL Image/Video MCP server running on HTTP port ${availablePort} at /mcp`);
+      });
+    } else {
+      // Default stdio transport for Claude Desktop
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+      console.error('FAL Image/Video MCP server running on stdio');
+    }
   }
 }
 
