@@ -99,7 +99,7 @@ try {
 const MODEL_REGISTRY = {
   imageGeneration: [
     { id: 'imagen4', endpoint: 'fal-ai/imagen4/preview', name: 'Imagen 4', description: 'Google\'s latest text-to-image model' },
-    { id: 'flux_kontext', endpoint: 'fal-ai/flux-pro/kontext', name: 'FLUX Kontext Pro', description: 'State-of-the-art prompt adherence and typography' },
+    { id: 'flux_kontext', endpoint: 'fal-ai/flux-pro/kontext/text-to-image', name: 'FLUX Kontext Pro', description: 'State-of-the-art prompt adherence and typography' },
     { id: 'ideogram_v3', endpoint: 'fal-ai/ideogram/v3', name: 'Ideogram V3', description: 'Advanced typography and realistic outputs' },
     { id: 'recraft_v3', endpoint: 'fal-ai/recraft/v3/text-to-image', name: 'Recraft V3', description: 'Professional design and illustration' },
     { id: 'stable_diffusion_35', endpoint: 'fal-ai/stable-diffusion-v35-large', name: 'Stable Diffusion 3.5 Large', description: 'Improved image quality and performance' },
@@ -117,6 +117,7 @@ const MODEL_REGISTRY = {
     { id: 'vidu_text', endpoint: 'fal-ai/vidu/q1/text-to-video', name: 'Vidu Q1', description: 'High-quality text-to-video' }
   ],
   imageToVideo: [
+    { id: 'ltx_video', endpoint: 'fal-ai/ltx-video-13b-distilled/image-to-video', name: 'LTX Video', description: 'Fast and high-quality image-to-video conversion' },
     { id: 'kling_master_image', endpoint: 'fal-ai/kling-video/v2.1/master/image-to-video', name: 'Kling 2.1 Master I2V', description: 'Premium image-to-video conversion' },
     { id: 'pixverse_image', endpoint: 'fal-ai/pixverse/v4.5/image-to-video', name: 'Pixverse V4.5 I2V', description: 'Advanced image-to-video' },
     { id: 'wan_pro_image', endpoint: 'fal-ai/wan-pro/image-to-video', name: 'Wan Pro I2V', description: 'Professional image animation' },
@@ -319,7 +320,7 @@ class FalMcpServer {
     this.server = new Server(
       {
         name: 'fal-image-video-mcp',
-        version: '1.0.5',
+        version: '1.0.7',
       },
       {
         capabilities: {
@@ -379,11 +380,13 @@ class FalMcpServer {
     } else if (category === 'imageToVideo') {
       baseSchema.inputSchema.properties = {
         image_url: { type: 'string', description: 'URL of the input image' },
-        prompt: { type: 'string', description: 'Motion description prompt (optional)' },
-        duration: { type: 'number', default: 5, minimum: 1, maximum: 30 },
-        aspect_ratio: { type: 'string', enum: ['16:9', '9:16', '1:1', '4:3', '3:4'], default: '16:9' },
+        prompt: { type: 'string', description: 'Motion description prompt' },
+        duration: { type: 'string', enum: ['5', '10'], default: '5', description: 'Video duration in seconds' },
+        aspect_ratio: { type: 'string', enum: ['16:9', '9:16', '1:1'], default: '16:9' },
+        negative_prompt: { type: 'string', description: 'What to avoid in the video' },
+        cfg_scale: { type: 'number', default: 0.5, minimum: 0, maximum: 1, description: 'How closely to follow the prompt' }
       };
-      baseSchema.inputSchema.required = ['image_url'];
+      baseSchema.inputSchema.required = ['image_url', 'prompt'];
     }
 
     return baseSchema;
@@ -559,17 +562,27 @@ class FalMcpServer {
     }
   }
 
+
   private async handleImageToVideo(args: any, model: any) {
-    const { image_url, prompt, duration = 5, aspect_ratio = '16:9' } = args;
+    const { 
+      image_url, 
+      prompt, 
+      duration = '5', 
+      aspect_ratio = '16:9',
+      negative_prompt,
+      cfg_scale
+    } = args;
 
     try {
       // Configure FAL client lazily with query config override
       configureFalClient(this.currentQueryConfig);
-      const inputParams: any = { image_url };
+      const inputParams: any = { image_url, prompt };
       
-      if (prompt) inputParams.prompt = prompt;
+      // Add optional parameters
       if (duration) inputParams.duration = duration;
       if (aspect_ratio) inputParams.aspect_ratio = aspect_ratio;
+      if (negative_prompt) inputParams.negative_prompt = negative_prompt;
+      if (cfg_scale !== undefined) inputParams.cfg_scale = cfg_scale;
 
       const result = await fal.subscribe(model.endpoint, { input: inputParams });
       const videoData = result.data as FalVideoResult;
@@ -668,6 +681,8 @@ class FalMcpServer {
     
     if (category === 'all') {
       modelsToList = getAllModels();
+    } else if (category === 'imageGeneration') {
+      modelsToList = MODEL_REGISTRY.imageGeneration;
     } else if (category === 'imageGeneration') {
       modelsToList = MODEL_REGISTRY.imageGeneration;
     } else if (category === 'textToVideo') {
@@ -806,7 +821,7 @@ class FalMcpServer {
         },
         serverInfo: {
           name: 'fal-image-video-mcp',
-          version: '1.0.6'
+          version: '1.0.8'
         }
       };
     });
@@ -949,7 +964,7 @@ class FalMcpServer {
                     },
                     serverInfo: {
                       name: 'fal-image-video-mcp',
-                      version: '1.0.6'
+                      version: '1.0.8'
                     },
                     ...(Object.keys(queryConfig).length > 0 && {
                       configuration: {
@@ -1126,7 +1141,7 @@ class FalMcpServer {
           });
           res.end(JSON.stringify({ 
             name: 'fal-image-video-mcp',
-            version: '1.0.6',
+            version: '1.0.8',
             status: 'running',
             endpoints: {
               mcp: '/mcp',
